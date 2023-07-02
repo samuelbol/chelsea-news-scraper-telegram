@@ -1,0 +1,135 @@
+import requests
+from apscheduler.schedulers.background import BlockingScheduler
+from bs4 import BeautifulSoup
+from pytz import utc
+from telegram import Bot, ParseMode
+
+#  Setting up scheduler
+scheduler = BlockingScheduler(timezone=utc)
+
+# Telegram bot API token
+TELEGRAM_TOKEN = "YOUR-TELEGRAM-TOKEN"
+CHANNEL_ID = "YOUR-CHANNEL-ID"
+
+# Initialize the Telegram bot
+bot = Bot(token=TELEGRAM_TOKEN)
+
+# Define the news sources and their URLs
+news_sources = [
+    {
+        'name': 'CaughtOffside',
+        'url': 'https://www.caughtoffside.com/feed/'
+    },
+    {
+        'name': 'ClubsFootballChampion',
+        'url': 'https://cfcloverslondon.com/feed/'
+    },
+    {
+        'name': 'Dasfootball',
+        'url': 'https://dasfootball.com/feed/'
+    },
+    {
+        'name': 'FootTheBall',
+        'url': 'https://www.foottheball.com/feed/'
+    },
+    {
+        'name': '90min EN',
+        'url': 'https://www.90min.com/posts.rss'
+    }
+]
+
+
+# Scrape news from each source
+def scrape_football_news():
+    news_items = []
+    for source in news_sources:
+        name = source['name']
+        url = source['url']
+
+        # Send a GET request to the news source URL
+        response = requests.get(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Extract the news from the HTML structure of each source
+        items = soup.find_all("item")
+        for item in items[:2]:
+
+            if name == '90min EN':
+                title = item.title.text
+                desc = item.description.text
+                news_items.append({'title': title, 'content': desc, 'source': name})
+
+            elif name == 'FootTheBall':
+                title = item.title.text
+                desc = item.description
+                desc_p = desc.find_all("p")
+                desc_list = [desc.text for desc in desc_p]
+                link = desc_p[-1].a.attrs["href"]
+                news_items.append({'title': title, 'contents': desc_list, 'link': link, 'source': name})
+
+            else:
+                title = item.title.text
+                contents = item.find("content:encoded")
+                contents_p = contents.find_all("p")
+                contents_list = [content.text for content in contents_p[:-1]]
+                link = contents_p[-1].a.attrs["href"]
+                news_items.append({'title': title, 'contents': contents_list, 'link': link, 'source': name})
+
+    return news_items
+
+
+# Function to send news to Telegram
+def send_news_to_telegram(news_items):
+    for item in news_items:
+        name = item['source']
+        if name == '90min EN':
+            i_title = item['title']
+            i_content = item['content']
+
+            message = f"🚨 *{i_title}*\n\n{i_content}\n\n@{name}"
+            # print(message)
+
+        else:
+            i_title = item['title']
+            i_content = '\n'.join(item['contents'])
+            i_link = item['link']
+
+            message = f"🚨 *{i_title}*\n\n{i_content}\n@{name} #TrueBlueFanClub"
+            # print(message)
+
+        try:
+            with open("multi_source_log.txt", "r") as file:
+                saved_titles = [line.rstrip("\n") for line in file.readlines()]
+
+            if i_title not in saved_titles:
+                try:
+                    # Save the title
+                    with open("multi_source_log.txt", 'a') as file:
+                        file.write(f"{i_title}\n")
+
+                    # Send the message to Telegram
+                    bot.send_message(chat_id=CHANNEL_ID, text=message, parse_mode=ParseMode.MARKDOWN_V2)
+                    # print(message)
+
+                except UnicodeError:
+                    pass
+
+        except FileNotFoundError:
+            # Incase Logfile not found
+            with open("multi_source_log.txt", 'a') as file:
+                file.write(f"{i_title}\n")
+
+
+# Main function to run the bot
+def main():
+    # Scrape the news from BBC News
+    news_items = scrape_football_news()
+
+    # Send the news to Telegram
+    send_news_to_telegram(news_items)
+
+
+scheduler.add_job(main, 'interval', hours=1, coalesce=False, misfire_grace_time=120)
+# scheduler.start()
+main()
+
